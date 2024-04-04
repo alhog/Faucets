@@ -1,0 +1,65 @@
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+contract AMM is ERC20, ReentrancyGuard {
+    uint public ethBalance;
+    uint public tokenBalance;
+    uint public feeBasisPoints;
+    address public owner;
+    uint public lastMint;
+    uint public interval = 1 hours;
+    uint public mintAmount = 37000;
+    uint public mintDuration = 37 weeks;
+
+    constructor(uint _feeBasisPoints) ERC20("FaucetToken", "FTK") {
+        feeBasisPoints = _feeBasisPoints;
+        owner = msg.sender;
+        lastMint = block.timestamp;
+    }
+
+    function depositEth() public payable {
+        ethBalance += msg.value;
+    }
+
+    function mintTokens() public {
+        require(block.timestamp >= lastMint + interval, "Too early to mint");
+        require(block.timestamp <= lastMint + mintDuration, "Minting period has ended");
+        lastMint = block.timestamp;
+        _mint(owner, mintAmount);
+        tokenBalance += mintAmount;
+    }
+
+    function swapEthForTokens(uint ethAmount, uint minTokens) public payable nonReentrant {
+        require(msg.value == ethAmount, "ETH amount mismatch");
+        uint tokenAmount = ethAmount * tokenBalance / ethBalance;
+        uint fee = tokenAmount * feeBasisPoints / 10000;
+        tokenAmount -= fee;
+        require(tokenAmount >= minTokens, "Slippage limit exceeded");
+        ethBalance += ethAmount;
+        tokenBalance -= tokenAmount;
+        _transfer(owner, msg.sender, tokenAmount);
+    }
+
+    function swapTokensForEth(uint tokenAmount, uint minEth) public nonReentrant {
+        _transfer(msg.sender, address(this), tokenAmount);
+        uint ethAmount = tokenAmount * ethBalance / tokenBalance;
+        uint fee = ethAmount * feeBasisPoints / 10000;
+        ethAmount -= fee;
+        require(ethAmount >= minEth, "Slippage limit exceeded");
+        ethBalance -= ethAmount;
+        tokenBalance += tokenAmount;
+        payable(msg.sender).transfer(ethAmount);
+    }
+
+    function withdrawFees() public {
+        require(msg.sender == owner, "Only owner can withdraw fees");
+        uint tokenFees = tokenBalance * feeBasisPoints / 10000;
+        uint ethFees = ethBalance * feeBasisPoints / 10000;
+        tokenBalance -= tokenFees;
+        ethBalance -= ethFees;
+        _transfer(address(this), owner, tokenFees);
+        payable(owner).transfer(ethFees);
+    }
+}
