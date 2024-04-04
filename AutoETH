@@ -1,0 +1,59 @@
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+contract AMM is ReentrancyGuard {
+    ERC20 public token;
+    uint public ethBalance;
+    uint public tokenBalance;
+    uint public feeBasisPoints;
+    address public owner;
+
+    constructor(ERC20 _token, uint _feeBasisPoints) {
+        token = _token;
+        feeBasisPoints = _feeBasisPoints;
+        owner = msg.sender;
+    }
+
+    function depositEth() public payable {
+        ethBalance += msg.value;
+    }
+
+    function depositTokens(uint amount) public {
+        token.transferFrom(msg.sender, address(this), amount);
+        tokenBalance += amount;
+    }
+
+    function swapEthForTokens(uint ethAmount, uint minTokens) public payable nonReentrant {
+        require(msg.value == ethAmount, "ETH amount mismatch");
+        uint tokenAmount = ethAmount * tokenBalance / ethBalance;
+        uint fee = tokenAmount * feeBasisPoints / 10000;
+        tokenAmount -= fee;
+        require(tokenAmount >= minTokens, "Slippage limit exceeded");
+        ethBalance += ethAmount;
+        tokenBalance -= tokenAmount;
+        token.transfer(msg.sender, tokenAmount);
+    }
+
+    function swapTokensForEth(uint tokenAmount, uint minEth) public nonReentrant {
+        token.transferFrom(msg.sender, address(this), tokenAmount);
+        uint ethAmount = tokenAmount * ethBalance / tokenBalance;
+        uint fee = ethAmount * feeBasisPoints / 10000;
+        ethAmount -= fee;
+        require(ethAmount >= minEth, "Slippage limit exceeded");
+        ethBalance -= ethAmount;
+        tokenBalance += tokenAmount;
+        payable(msg.sender).transfer(ethAmount);
+    }
+
+    function withdrawFees() public {
+        require(msg.sender == owner, "Only owner can withdraw fees");
+        uint tokenFees = tokenBalance * feeBasisPoints / 10000;
+        uint ethFees = ethBalance * feeBasisPoints / 10000;
+        tokenBalance -= tokenFees;
+        ethBalance -= ethFees;
+        token.transfer(owner, tokenFees);
+        payable(owner).transfer(ethFees);
+    }
+}
