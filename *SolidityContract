@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+
+contract AMMFaucet is ERC20, ReentrancyGuard, Ownable, Pausable, Initializable {
+    uint256 public ethBalance;
+    uint256 public tokenBalance;
+    uint256 public feeBasisPoints;
+    uint256 public lastMint;
+    uint256 public interval = 1 hours;
+    uint256 public mintAmount = 37000;
+    uint256 public mintDuration = 37 weeks;
+    address[] public oracleAddresses;
+
+    event TokenSwapped(address indexed user, uint256 amountIn, uint256 amountOut);
+    event LiquidityProvided(address indexed user, uint256 amountProvided);
+    event TokensMinted(address indexed user, uint256 amountMinted);
+
+    modifier onlyOwnerOrAdmin() {
+        require(msg.sender == owner() || hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Caller is not the owner or admin");
+        _;
+    }
+
+    function initialize(uint256 _feeBasisPoints) public initializer {
+        __ERC20_init("FaucetToken", "FTK");
+        __ReentrancyGuard_init();
+        __Ownable_init();
+        __Pausable_init();
+
+        feeBasisPoints = _feeBasisPoints;
+        lastMint = block.timestamp;
+    }
+
+    function depositEth() public payable whenNotPaused {
+        ethBalance += msg.value;
+    }
+
+    function mintTokens() public onlyOwnerOrAdmin whenNotPaused {
+        require(block.timestamp >= lastMint + interval, "Too early to mint");
+        require(block.timestamp <= lastMint + mintDuration, "Minting period has ended");
+
+        lastMint = block.timestamp;
+        _mint(owner(), mintAmount);
+        tokenBalance += mintAmount;
+
+        emit TokensMinted(msg.sender, mintAmount);
+    }
+
+    function swapEthForTokens(uint256 ethAmount, uint256 minTokens) public payable nonReentrant whenNotPaused {
+        require(msg.value == ethAmount, "ETH amount mismatch");
+        uint256 tokenAmount = getTokenAmount(ethAmount);
+        uint256 fee = tokenAmount * feeBasisPoints / 10000;
+        tokenAmount -= fee;
+        require(tokenAmount >= minTokens, "Slippage limit exceeded");
+
+        ethBalance += ethAmount;
+        tokenBalance -= tokenAmount;
+        _transfer(owner(), msg.sender, tokenAmount);
+
+        emit TokenSwapped(msg.sender, ethAmount, tokenAmount);
+    }
+
+    function swapTokensForEth(uint256 tokenAmount, uint256 minEth) public nonReentrant whenNotPaused {
+        _transfer(msg.sender, address(this), tokenAmount);
+        uint256 ethAmount = getEthAmount(tokenAmount);
+        uint256 fee = ethAmount * feeBasisPoints / 10000;
+        ethAmount -= fee;
+        require(ethAmount >= minEth, "Slippage limit exceeded");
+
+        ethBalance -= ethAmount;
+        tokenBalance += tokenAmount;
+        payable(msg.sender).transfer(ethAmount);
+
+        emit TokenSwapped(msg.sender, tokenAmount, ethAmount);
+    }
+
+    function provideLiquidity(uint256 _amount, address _token) external nonReentrant whenNotPaused {
+        // Transfer tokens from user
+        userTokenBalances[_token][msg.sender] -= _amount;
+        userLiquidityProvided[msg.sender] += _amount;
+        totalLiquidity += _amount;
+
+        // Mint new tokens to user
+        uint256 mintedTokens = calculateMintedTokens(_amount);
+        _mint(msg.sender, mintedTokens);
+
+        emit LiquidityProvided(msg.sender, _amount);
+        emit TokensMinted(msg.sender, mintedTokens);
+    }
+
+    function withdrawFees() public onlyOwnerOrAdmin {
+        uint256 tokenFees = tokenBalance * feeBasisPoints / 10000;
+        uint256 ethFees = ethBalance * feeBasisPoints / 10000;
+
+        tokenBalance -= tokenFees;
+        ethBalance -= ethFees;
+
+        _transfer(address(this), owner(), tokenFees);
+        payable(owner()).transfer(ethFees);
+    }
+
+    function setFeeBasisPoints(uint256 _newFee) public onlyOwnerOrAdmin {
+        feeBasisPoints = _newFee;
+    }
+
+    function addOracle(address _oracle) public onlyOwnerOrAdmin {
+        oracleAddresses.push(_oracle);
+    }
+
+    function removeOracle(uint256 _index) public onlyOwnerOrAdmin {
+        require(_index < oracleAddresses.length, "Invalid oracle index");
+        oracleAddresses[_index] = oracleAddresses[oracleAddresses.length - 1];
+        oracleAddresses.pop();
+    }
+
+    function pause() public onlyOwner {
+        _pause();
+    }
+
+    function unpause() public onlyOwner {
+        _unpause();
+    }
+
+    function getTokenAmount(uint256 _ethAmount) internal view returns (uint256) {
+        // Calculate token amount based on oracles and liquidity
+        // ...
+        return _ethAmount * tokenBalance / ethBalance;
+    }
+
+    function getEthAmount(uint256 _tokenAmount) internal view returns (uint256) {
+        // Calculate ETH amount based on oracles and liquidity
+        // ...
+        return _tokenAmount * ethBalance / tokenBalance;
+    }
+
+    function calculateMintedTokens(uint256 _amount) internal view returns (uint256) {
+        // Calculate minted tokens based on the provided liquidity
+        // ...
+    }
+
+    receive() external payable {}
+}
